@@ -1,0 +1,6 @@
+BG_PAGE = '#dddee0'
+BG_SIDEBAR = '#1f2525'
+BG_ACTIVE = "#343b3b"
+BG_HOVER = "#454d4d"
+ICON_COLOR = '#dddee0'
+DIVIDER_COLOR = '#545c5b'
