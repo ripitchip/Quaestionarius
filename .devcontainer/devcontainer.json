@@ -1,0 +1,32 @@
+{
+  "name": "flet-creator-dev",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "workspaceFolder": "/app",
+  "runArgs": [
+    "--network=host",
+    "--ipc=host",
+    "--device=/dev/dri:/dev/dri",
+    "-e",
+    "DISPLAY=${localEnv:DISPLAY}",
+    "-e",
+    "GDK_BACKEND=x11",
+    "-v",
+    "/tmp/.X11-unix:/tmp/.X11-unix"
+  ],
+  "mounts": [
+    "source=${localWorkspaceFolder},target=/app,type=bind"
+  ],
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance"
+      ]
+    }
+  },
+  "postCreateCommand": "pip install --no-cache-dir flet",
+  "remoteUser": "root"
+}

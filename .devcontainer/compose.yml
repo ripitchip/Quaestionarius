@@ -1,0 +1,21 @@
+services:
+  flet-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: flet-creator-dev
+    ipc: host
+    environment:
+      - DISPLAY=${DISPLAY}
+      # Flet/Flutter specific: Force X11 rendering over XWayland
+      - GDK_BACKEND=x11
+    volumes:
+      - .:/app
+      - /tmp/.X11-unix:/tmp/.X11-unix
+    devices:
+      - /dev/dri:/dev/dri
+    network_mode: host
+    # stdin_open: true
+    # tty: true
+    # Use tail -f to keep it alive for "exec" testing
+    command: tail -f /dev/null
