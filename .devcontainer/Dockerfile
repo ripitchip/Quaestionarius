@@ -24,5 +24,14 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
+# Create non-root user
+RUN useradd -m -s /bin/bash vscode && \
+    chown -R vscode:vscode /app
+
+USER vscode
+
+# Add user's local bin to PATH
+ENV PATH="/home/vscode/.local/bin:${PATH}"
+
 # Keep container alive for exec / debugging
 CMD ["tail", "-f", "/dev/null"]

@@ -27,6 +27,6 @@
       ]
     }
   },
-  "postCreateCommand": "pip install --no-cache-dir flet",
-  "remoteUser": "root"
+  "postCreateCommand": "pip install --user --no-cache-dir flet",
+  "remoteUser": "vscode"
 }
