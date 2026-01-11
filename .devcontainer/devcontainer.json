@@ -28,5 +28,6 @@
     }
   },
   "postCreateCommand": "pip install --user --no-cache-dir flet",
+  "postStartCommand": "dbus-daemon --session --address=$DBUS_SESSION_BUS_ADDRESS --nofork --nopidfile --syslog-only &",
   "remoteUser": "vscode"
 }

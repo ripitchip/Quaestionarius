@@ -3,8 +3,15 @@ from .forms_view import FormsView
 from .settings_view import SettingsView
 
 class Views:
-    @staticmethod
-    def get_view(name):
+    _page = None
+    
+    @classmethod
+    def set_page(cls, page):
+        """Set the page reference for views that need it."""
+        cls._page = page
+    
+    @classmethod
+    def get_view(cls, name):
         # Map names to the CLASS (don't call () yet)
         views_map = {
             "Main": MainView,
@@ -16,4 +23,6 @@ class Views:
         view_class = views_map.get(name, MainView)
         
         # Initialize and return only the requested view
+        if name == "Settings" and cls._page:
+            return view_class(cls._page)
         return view_class()

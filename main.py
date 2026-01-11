@@ -9,6 +9,9 @@ def main(page: ft.Page):
     page.bgcolor = BG_PAGE
     page.padding = 0
 
+    # Set page reference in Views
+    Views.set_page(page)
+
     # Initialize the content area with the MainView object
     content_area = ft.Container(
         expand=True, 
