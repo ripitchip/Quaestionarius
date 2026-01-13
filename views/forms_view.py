@@ -1,5 +1,5 @@
 import flet as ft
-import json
+import csv
 
 class FormsView(ft.Column):
     def __init__(self):
@@ -12,109 +12,116 @@ class FormsView(ft.Column):
         self.csv_file_path = None
         self.csv_file_name = ft.Text("No file selected", color="#666666", size=12)
         
-        # JSON file state
-        self.json_file_path = None
-        self.json_file_name = ft.Text("No file selected", color="#666666", size=12)
+        # Team data
+        self.teams_data = {}  # Dictionary: team_number -> list of members
+        self.team_numbers = []  # Sorted list of team numbers
+        self.current_team_index = 0
         
-        # JSON editor
-        self.json_editor = ft.TextField(
-            label="JSON Editor",
-            multiline=True,
-            min_lines=20,
-            max_lines=25,
-            value="",
-            border_color="#d0d0d0",
-            focused_border_color="#1f2525",
-            text_style=ft.TextStyle(font_family="Courier New", size=11),
+        # Team navigation text
+        self.team_info_text = ft.Text("", size=16, weight="bold", color="#1f2525")
+        
+        # Navigation buttons
+        self.prev_button = ft.IconButton(
+            icon=ft.Icons.ARROW_BACK,
+            on_click=self.handle_prev_team,
+            disabled=True,
+        )
+        self.next_button = ft.IconButton(
+            icon=ft.Icons.ARROW_FORWARD,
+            on_click=self.handle_next_team,
+            disabled=True,
         )
         
-        # Form container with two columns
-        self.form_container = ft.Row(
+        # Data table for team members
+        self.data_table = ft.DataTable(
+            columns=[
+                ft.DataColumn(ft.Text("Prenom", weight="bold")),
+                ft.DataColumn(ft.Text("Nom", weight="bold")),
+                ft.DataColumn(ft.Text("Email", weight="bold")),
+            ],
+            rows=[],
+            border=ft.Border.all(1, "#d0d0d0"),
+            border_radius=8,
+            horizontal_lines=ft.BorderSide(1, "#e0e0e0"),
+            heading_row_color="#f5f5f5",
+        )
+        
+        # Form container with vertical layout
+        self.form_container = ft.Column(
             expand=True,
             spacing=20,
             controls=[
-                # Left column - File inputs
+                # Header and file selector section
                 ft.Column(
-                    width=350,
                     spacing=15,
                     controls=[
                         ft.Text("Form Creations", size=30, weight="bold", color="#1f2525"),
                         ft.Divider(height=1, color="#e0e0e0"),
                         
                         # CSV Section
-                        ft.Container(
-                            padding=15,
-                            bgcolor="#f5f5f5",
-                            border_radius=8,
-                            content=ft.Column(
-                                spacing=10,
-                                controls=[
-                                    ft.Text("CSV File", size=14, weight="bold", color="#1f2525"),
-                                    ft.Button(
-                                        content="Choose CSV",
-                                        icon=ft.Icons.INSERT_DRIVE_FILE,
-                                        on_click=self.handle_csv_pick,
-                                        width=320,
-                                    ),
-                                    self.csv_file_name,
-                                ]
-                            ),
-                        ),
-                        
-                        # JSON Section
-                        ft.Container(
-                            padding=15,
-                            bgcolor="#f5f5f5",
-                            border_radius=8,
-                            content=ft.Column(
-                                spacing=10,
-                                controls=[
-                                    ft.Text("JSON File", size=14, weight="bold", color="#1f2525"),
-                                    ft.Button(
-                                        content="Choose JSON",
-                                        icon=ft.Icons.DATA_OBJECT,
-                                        on_click=self.handle_json_pick,
-                                        width=320,
-                                    ),
-                                    self.json_file_name,
-                                ]
-                            ),
-                        ),
-                        
-                        # Action buttons
                         ft.Row(
                             spacing=10,
                             controls=[
-                                ft.Button(
-                                    content="Save JSON",
-                                    icon=ft.Icons.SAVE,
-                                    on_click=self.handle_save_json,
-                                    width=160,
+                                ft.Container(
+                                    padding=15,
+                                    bgcolor="#f5f5f5",
+                                    border_radius=8,
+                                    content=ft.Column(
+                                        spacing=10,
+                                        controls=[
+                                            ft.Text("Team CSV File", size=14, weight="bold", color="#1f2525"),
+                                            ft.Text("Expected columns: Prenom, Nom, Email, Team", size=11, color="#666666"),
+                                            ft.Button(
+                                                content="Choose CSV",
+                                                icon=ft.Icons.INSERT_DRIVE_FILE,
+                                                on_click=self.handle_csv_pick,
+                                                width=320,
+                                            ),
+                                            self.csv_file_name,
+                                        ]
+                                    ),
                                 ),
                                 ft.Button(
                                     content="Reset",
                                     icon=ft.Icons.REFRESH,
                                     on_click=self.handle_reset,
-                                    width=160,
                                 ),
                             ]
                         ),
                     ]
                 ),
                 
-                # Right column - JSON Editor
+                # Data Table section - full width
                 ft.Column(
-                    expand=True,
                     spacing=10,
                     controls=[
-                        ft.Text("Editor", size=14, weight="bold", color="#1f2525"),
+                        ft.Row(
+                            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                            controls=[
+                                self.team_info_text,
+                                ft.Row(
+                                    spacing=5,
+                                    controls=[
+                                        self.prev_button,
+                                        self.next_button,
+                                    ]
+                                ),
+                            ]
+                        ),
                         ft.Container(
-                            expand=True,
                             padding=10,
                             bgcolor="white",
-                            border=ft.border.all(1, "#d0d0d0"),
+                            border=ft.Border.all(1, "#d0d0d0"),
                             border_radius=8,
-                            content=self.json_editor,
+                            content=ft.Column(
+                                scroll=ft.ScrollMode.AUTO,
+                                controls=[self.data_table],
+                            ),
+                        ),
+                        ft.Button(
+                            content="Process Users",
+                            icon=ft.Icons.CHECK,
+                            on_click=self.handle_process_users,
                         ),
                     ]
                 ),
@@ -123,73 +130,135 @@ class FormsView(ft.Column):
         
         self.controls = [self.form_container]
     
+    def handle_process_users(self, e):
+        print("=== Users in current team ===")
+        for row in self.data_table.rows:
+            prenom = row.cells[0].content.value
+            nom = row.cells[1].content.value
+            email = row.cells[2].content.value
+            print(f"Prenom: {prenom}, Nom: {nom}, Email: {email}")
+        print("=============================")
+    
+    def handle_prev_team(self, e):
+        if self.current_team_index > 0:
+            self.current_team_index -= 1
+            self.display_current_team()
+    
+    def handle_next_team(self, e):
+        if self.current_team_index < len(self.team_numbers) - 1:
+            self.current_team_index += 1
+            self.display_current_team()
+    
+    def display_current_team(self):
+        if not self.team_numbers:
+            return
+        
+        team_number = self.team_numbers[self.current_team_index]
+        members = self.teams_data[team_number]
+        
+        # Update team info
+        self.team_info_text.value = f"Team {team_number} ({self.current_team_index + 1}/{len(self.team_numbers)})"
+        
+        # Update navigation buttons
+        self.prev_button.disabled = (self.current_team_index == 0)
+        self.next_button.disabled = (self.current_team_index == len(self.team_numbers) - 1)
+        
+        # Update table
+        self.data_table.rows.clear()
+        for member in members:
+            self.data_table.rows.append(
+                ft.DataRow(
+                    cells=[
+                        ft.DataCell(ft.Text(member['prenom'])),
+                        ft.DataCell(ft.Text(member['nom'])),
+                        ft.DataCell(ft.Text(member['email'])),
+                    ]
+                )
+            )
+        
+        self.team_info_text.update()
+        self.prev_button.update()
+        self.next_button.update()
+        self.data_table.update()
+    
     async def handle_csv_pick(self, e):
         files = await ft.FilePicker().pick_files(
             allowed_extensions=["csv"],
-            dialog_title="Pick a CSV file"
+            dialog_title="Pick a CSV file with team members"
         )
         if files:
             self.csv_file_path = files[0].path
             self.csv_file_name.value = f"✓ {files[0].name}"
             self.csv_file_name.color = "#4CAF50"
-            self.csv_file_name.update()
-    
-    async def handle_json_pick(self, e):
-        files = await ft.FilePicker().pick_files(
-            allowed_extensions=["json"],
-            dialog_title="Pick a JSON file"
-        )
-        if files:
-            self.json_file_path = files[0].path
-            self.json_file_name.value = f"✓ {files[0].name}"
-            self.json_file_name.color = "#4CAF50"
             
-            # Load and display JSON in editor
+            # Load and organize CSV data by teams
             try:
-                with open(files[0].path, 'r') as f:
-                    json_data = json.load(f)
-                    self.json_editor.value = json.dumps(json_data, indent=2)
-            except Exception as ex:
-                self.json_editor.value = f"Error loading JSON: {str(ex)}"
-            
-            self.json_file_name.update()
-            self.json_editor.update()
-    
-    async def handle_save_json(self, e):
-        if not self.json_file_path:
-            self.json_editor.error_text = "No JSON file selected"
-            self.json_editor.update()
-            return
-        
-        try:
-            # Validate JSON
-            json_data = json.loads(self.json_editor.value)
-            
-            # Save to file
-            with open(self.json_file_path, 'w') as f:
-                json.dump(json_data, f, indent=2)
-            
-            self.json_editor.error_text = None
-            self.json_editor.label = "✓ Saved successfully!"
-            self.json_editor.update()
-        except json.JSONDecodeError as ex:
-            self.json_editor.error_text = f"Invalid JSON: {str(ex)}"
-            self.json_editor.update()
-        except Exception as ex:
-            self.json_editor.error_text = f"Error: {str(ex)}"
-            self.json_editor.update()
-    
+                with open(files[0].path, 'r', encoding='utf-8') as f:
+                    # Try to detect if file has headers
+                    first_line = f.readline().strip()
+                    f.seek(0)
+                    
+                    # Check if first line looks like headers
+                    has_headers = 'prenom' in first_line.lower() or 'nom' in first_line.lower() or 'email' in first_line.lower()
+                    
+                    self.teams_data.clear()
+                    
+                    if has_headers:
+                        csv_reader = csv.DictReader(f)
+                        
+                        for row in csv_reader:
+                            prenom = row.get('Prenom', row.get('prenom', ''))
+                            nom = row.get('Nom', row.get('nom', ''))
+                            email = row.get('Email', row.get('email', ''))
+                            team = row.get('Team', row.get('team', ''))
+                            
+                            if team not in self.teams_data:
+                                self.teams_data[team] = []
+                            
+                            self.teams_data[team].append({
+                                'prenom': prenom,
+                                'nom': nom,
+                                'email': email
+                            })
+                    else:
+                        # No headers, assume columns are: Prenom, Nom, Email, Team
+                        csv_reader = csv.reader(f)
+                        
+                        for row in csv_reader:
+                            if len(row) >= 4:
+                                prenom = row[0]
+                                nom = row[1]
+                                email = row[2]
+                                team = row[3]
+                                
+                                if team not in self.teams_data:
+                                    self.teams_data[team] = []
+                                
+                                self.teams_data[team].append({
+                                    'prenom': prenom,
+                                    'nom': nom,
+                                    'email': email
+                                })
+                    
+                    # Sort team numbers
+                    self.team_numbers = sorted(self.teams_data.keys())
+                    self.current_team_index = 0
+                    
+                    # Display first team
+                    if self.team_numbers:
+                        self.display_current_team()
+                    
+                self.csv_file_name.update()
+            except:
+                self.csv_file_name.value = "Error loading CSV file"
+                self.csv_file_name.color = "#f44336"
+                self.csv_file_name.update()
+
     async def handle_reset(self, e):
         self.csv_file_path = None
-        self.json_file_path = None
         self.csv_file_name.value = "No file selected"
         self.csv_file_name.color = "#666666"
-        self.json_file_name.value = "No file selected"
-        self.json_file_name.color = "#666666"
-        self.json_editor.value = ""
-        self.json_editor.label = "JSON Editor"
-        self.json_editor.error_text = None
+        self.data_table.rows.clear()
         
         self.csv_file_name.update()
-        self.json_file_name.update()
-        self.json_editor.update()
+        self.data_table.update()

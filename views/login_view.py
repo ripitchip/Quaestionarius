@@ -14,7 +14,8 @@ class LoginView(ft.Column):
         self.horizontal_alignment = ft.CrossAxisAlignment.CENTER
         self.spacing = 20
         self.padding = 40
-        self.expand = True
+        # Do not expand to full width; keep as centered block
+        self.expand = False
         
         self.auth_service = GoogleAuthService()
         self.on_auth_success = on_auth_success
@@ -28,7 +29,7 @@ class LoginView(ft.Column):
             text_align=ft.TextAlign.CENTER
         )
         
-        # Main container
+        # Main container (fixed width, centered)
         self.main_container = ft.Container(
             width=400,
             bgcolor="white",

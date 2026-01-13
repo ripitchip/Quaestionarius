@@ -87,69 +87,77 @@ class SettingsView(ft.Column):
             ],
         )
 
-    def _card(self, content):
+    def _card(self, content, width: int | None = None):
         return ft.Container(
             padding=20,
             bgcolor="#ffffff",
             border_radius=12,
             border=ft.Border.all(1, "#e0e0e0"),
+            width=width,
             content=content,
         )
 
     def _google_auth_card(self):
-        return self._card(
-            ft.Column(
-                spacing=20,
-                controls=[
-                    self._section_header(
-                        ft.Icons.SECURITY,
-                        "Google Authentication",
-                        "Connect your Google account securely"
-                    ),
-                    ft.Divider(),
-
-                    # Credentials upload
+        # Center the card and constrain its width so it doesn't stretch
+        return ft.Row(
+            alignment=ft.MainAxisAlignment.CENTER,
+            controls=[
+                self._card(
                     ft.Column(
-                        spacing=10,
+                        spacing=20,
                         controls=[
-                            ft.Text(
-                                "Step 1: Upload credentials.json",
-                                weight=ft.FontWeight.BOLD,
+                            self._section_header(
+                                ft.Icons.SECURITY,
+                                "Google Authentication",
+                                "Connect your Google account securely"
                             ),
-                            ft.Text(
-                                "Download this file from Google Cloud Console",
-                                size=12,
-                                color="#666",
+                            ft.Divider(),
+
+                            # Credentials upload
+                            ft.Column(
+                                spacing=10,
+                                controls=[
+                                    ft.Text(
+                                        "Step 1: Upload credentials.json",
+                                        weight=ft.FontWeight.BOLD,
+                                    ),
+                                    ft.Text(
+                                        "Download this file from Google Cloud Console",
+                                        size=12,
+                                        color="#666",
+                                    ),
+                                    ft.ElevatedButton(
+                                        "Choose credentials.json",
+                                        icon=ft.Icons.UPLOAD_FILE,
+                                        width=260,
+                                        on_click=self.handle_credentials_pick,
+                                    ),
+                                    self.credentials_file_name,
+                                ],
                             ),
-                            ft.ElevatedButton(
-                                "Choose credentials.json",
-                                icon=ft.Icons.UPLOAD_FILE,
-                                width=260,
-                                on_click=self.handle_credentials_pick,
+
+                            ft.Divider(),
+
+                            # Login
+                            ft.Column(
+                                spacing=12,
+                                controls=[
+                                    ft.Text(
+                                        "Step 2: Authenticate",
+                                        weight=ft.FontWeight.BOLD,
+                                    ),
+                                    self.login_status_view,
+                                    LoginView(
+                                        on_auth_success=self.on_auth_success,
+                                        on_auth_error=self.on_auth_error,
+                                    ),
+                                ],
                             ),
-                            self.credentials_file_name,
                         ],
                     ),
-
-                    ft.Divider(),
-
-                    # Login
-                    ft.Column(
-                        spacing=12,
-                        controls=[
-                            ft.Text(
-                                "Step 2: Authenticate",
-                                weight=ft.FontWeight.BOLD,
-                            ),
-                            self.login_status_view,
-                            LoginView(
-                                on_auth_success=self.on_auth_success,
-                                on_auth_error=self.on_auth_error,
-                            ),
-                        ],
-                    ),
-                ],
-            )
+                    width=520,
+                )
+            ],
         )
 
     # ---------- HANDLERS (UNCHANGED) ----------
