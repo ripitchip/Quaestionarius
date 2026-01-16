@@ -1,33 +1,44 @@
 {
-  "name": "flet-creator-dev",
-  "build": {
-    "dockerfile": "Dockerfile",
-    "context": ".."
-  },
-  "workspaceFolder": "/app",
-  "runArgs": [
-    "--network=host",
-    "--ipc=host",
-    "--device=/dev/dri:/dev/dri",
-    "-e",
-    "DISPLAY=${localEnv:DISPLAY}",
-    "-e",
-    "GDK_BACKEND=x11",
-    "-v",
-    "/tmp/.X11-unix:/tmp/.X11-unix"
-  ],
-  "mounts": [
-    "source=${localWorkspaceFolder},target=/app,type=bind"
-  ],
-  "customizations": {
-    "vscode": {
-      "extensions": [
-        "ms-python.python",
-        "ms-python.vscode-pylance"
-      ]
-    }
-  },
-  "postCreateCommand": "pip install --user --no-cache-dir flet",
-  "postStartCommand": "dbus-daemon --session --address=$DBUS_SESSION_BUS_ADDRESS --nofork --nopidfile --syslog-only &",
-  "remoteUser": "vscode"
+    "name": "Tauri + Python Dev",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": ".."
+    },
+    "runArgs": [
+        "--network=host",
+        "--ipc=host",
+        "-e",
+        "DISPLAY=${localEnv:DISPLAY}",
+        "-e",
+        "WAYLAND_DISPLAY=${localEnv:WAYLAND_DISPLAY}",
+        "-e",
+        "XDG_RUNTIME_DIR=${localEnv:XDG_RUNTIME_DIR}",
+        "-e",
+        "GDK_BACKEND=x11",
+        "-v",
+        "/tmp/.X11-unix:/tmp/.X11-unix",
+        "-v",
+        "${localEnv:XDG_RUNTIME_DIR}/${localEnv:WAYLAND_DISPLAY}:/run/user/1000/${localEnv:WAYLAND_DISPLAY}"
+    ],
+    "containerEnv": {
+        "XDG_RUNTIME_DIR": "/run/user/1000",
+        "LIBGL_ALWAYS_SOFTWARE": "1"
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "rust-lang.rust-analyzer",
+                "tamasfe.even-better-toml",
+                "ms-python.python",
+                "ms-python.vscode-pylance",
+                "dbaeumer.vscode-eslint",
+                "tauri-apps.tauri-vscode",
+                "Vue.volar"
+            ],
+            "settings": {
+                "terminal.integrated.defaultProfile.linux": "zsh"
+            }
+        }
+    },
+    "remoteUser": "vscode"
 }
