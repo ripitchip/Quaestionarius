@@ -17,11 +17,6 @@
       "identifier": "shell:allow-execute",
       "allow": [
         {
-          "name": "binaries/hello",
-          "sidecar": true,
-          "args": true
-        },
-        {
           "name": "binaries/google_auth",
           "sidecar": true,
           "args": true

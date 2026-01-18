@@ -6,6 +6,7 @@
 /src-tauri/python_executables/
 /src-tauri/src/python_bin
 /src-tauri/src/python_executables/
+/src-tauri/.venv
 
 # IDE
 .vscode/
@@ -20,6 +21,7 @@ Thumbs.db
 
 # Node
 node_modules/
+.pnpm-store
 dist/
 .pnpm-debug.log*
 

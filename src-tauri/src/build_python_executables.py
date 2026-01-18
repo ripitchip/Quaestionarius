@@ -14,7 +14,7 @@ DIST_DIR = BUILD_DIR / "dist"
 # Create build directory
 BUILD_DIR.mkdir(exist_ok=True)
 
-def build_executable(script_name: str, output_name: str):
+def build_executable(script_name: str, output_name: str, hidden_imports=None):
     """Build a single executable with PyInstaller"""
     script_path = SCRIPT_DIR / f"{script_name}.py"
     
@@ -36,6 +36,11 @@ def build_executable(script_name: str, output_name: str):
         str(script_path),
     ]
     
+    # Add hidden imports if provided
+    if hidden_imports:
+        for module in hidden_imports:
+            cmd.extend(["--hidden-import", module])
+    
     result = subprocess.run(cmd, capture_output=True, text=True)
     
     if result.returncode != 0:
@@ -50,8 +55,23 @@ def main():
     """Build all Python executables"""
     print("🚀 Building portable Python executables...")
     
+    # Hidden imports for google_auth
+    google_auth_imports = [
+        "google_auth_oauthlib",
+        "google_auth_oauthlib.flow",
+        "googleapiclient",
+        "googleapiclient.discovery",
+        "google.auth",
+        "google.auth.transport",
+        "google.auth.transport.requests",
+        "google.oauth2",
+        "google.oauth2.credentials",
+        "pickle",
+        "requests_oauthlib",
+    ]
+    
     success = True
-    success &= build_executable("google_auth", "google_auth")
+    success &= build_executable("google_auth", "google_auth", google_auth_imports)
     success &= build_executable("json_processor", "json_processor")
     
     if success:
