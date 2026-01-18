@@ -22,22 +22,37 @@ def get_storage_dir() -> Path:
     return storage_dir
 
 
-def authenticate_google() -> dict:
+def authenticate_google(credentials_json: str = None) -> dict:
     """
-    Authenticate with Google using saved credentials.json.
+    Authenticate with Google using provided credentials JSON.
+    
+    Args:
+        credentials_json: JSON string containing Google OAuth credentials
     
     Returns:
         dict: Authentication status and message
     """
     try:
         storage_dir = get_storage_dir()
-        credentials_file = storage_dir / "credentials.json"
         token_file = storage_dir / "token.pickle"
         
-        if not credentials_file.exists():
+        # If credentials not provided, try reading from stdin
+        if not credentials_json:
+            credentials_json = sys.stdin.read()
+        
+        if not credentials_json or not credentials_json.strip():
             return {
                 "status": "error",
-                "message": "No credentials.json found. Please save your credentials first."
+                "message": "No credentials provided. Please save your credentials first."
+            }
+        
+        # Parse and validate the credentials JSON
+        try:
+            credentials_data = json.loads(credentials_json)
+        except json.JSONDecodeError as e:
+            return {
+                "status": "error",
+                "message": f"Invalid credentials JSON: {str(e)}"
             }
         
         creds = None
@@ -52,8 +67,9 @@ def authenticate_google() -> dict:
             if creds and creds.expired and creds.refresh_token:
                 creds.refresh(Request())
             else:
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    str(credentials_file), SCOPES
+                # Create flow from credentials data instead of file
+                flow = InstalledAppFlow.from_client_config(
+                    credentials_data, SCOPES
                 )
                 # Suppress browser opening message by redirecting stderr
                 old_stdout = sys.stdout
@@ -140,6 +156,7 @@ if __name__ == "__main__":
     command = sys.argv[1]
     
     if command == "authenticate":
+        # Credentials will be read from stdin
         result = authenticate_google()
         print(json.dumps(result, indent=2))
     elif command == "check_status":
