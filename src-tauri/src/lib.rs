@@ -201,10 +201,41 @@ fn authenticate_google(app: AppHandle) -> Result<String, String> {
 fn check_auth_status(app: AppHandle) -> Result<String, String> {
     let exe = resolve_sidecar(&app, "google_auth")?;
 
-    let output = Command::new(&exe)
+    // Read saved credentials if available
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data directory: {}", e))?;
+    let saved_path = app_data_dir.join("credentials.json");
+
+    let has_credentials = saved_path.exists();
+    let credentials_content = if has_credentials {
+        fs::read_to_string(&saved_path).unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    // Pass credentials via stdin
+    let mut child = Command::new(&exe)
         .arg("check_status")
-        .output()
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .map_err(|e| format!("Failed to execute sidecar: {}", e))?;
+
+    // Write credentials to stdin
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        stdin
+            .write_all(credentials_content.as_bytes())
+            .map_err(|e| format!("Failed to write to stdin: {}", e))?
+        // stdin is dropped here, closing the pipe
+    }
+
+    let output = child
+        .wait_with_output()
+        .map_err(|e| format!("Failed to wait for sidecar: {}", e))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);

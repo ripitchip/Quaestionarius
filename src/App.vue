@@ -8,6 +8,7 @@ const jsonFileName = ref("");
 const jsonOutput = ref("");
 const jsonLoading = ref(false);
 const jsonError = ref("");
+const credentialsSaved = ref(false);
 
 const credentialsStatus = ref("");
 const credentialsStatusType = ref<"info" | "success" | "warning" | "">("");
@@ -39,8 +40,8 @@ async function checkAuthStatus() {
     } else {
       isAuthenticated.value = false;
       authStatus.value = response.has_credentials 
-        ? "Ready to authenticate" 
-        : "Please save credentials first";
+        ? "✅ Ready to connect with Google" 
+        : "📝 Please save credentials first";
     }
   } catch (e) {
     console.error("Auth check error:", e);
@@ -51,6 +52,7 @@ async function checkAuthStatus() {
 async function openJsonFile() {
   try {
     jsonError.value = "";
+    credentialsSaved.value = false;
     const file = await open({
       filters: [
         {
@@ -108,10 +110,14 @@ async function saveCredentials() {
     if (response.status === "saved") {
       credentialsStatus.value = response.message;
       credentialsStatusType.value = "success";
+      credentialsSaved.value = true;
+      await new Promise(resolve => setTimeout(resolve, 500));
       await checkAuthStatus();
     } else if (response.status === "updated") {
       credentialsStatus.value = response.message;
       credentialsStatusType.value = "warning";
+      credentialsSaved.value = true;
+      await new Promise(resolve => setTimeout(resolve, 500));
       await checkAuthStatus();
     } else if (response.status === "already_saved") {
       credentialsStatus.value = "✓ " + response.message;
@@ -166,7 +172,7 @@ async function authenticateGoogle() {
         <span v-if="jsonFileName" class="file-name">{{ jsonFileName }}</span>
       </div>
 
-      <div v-if="jsonFileName" class="button-group" style="margin-top: 15px;">
+      <div v-if="jsonFileName && !credentialsSaved" class="button-group" style="margin-top: 15px;">
         <button 
           @click="saveCredentials" 
           :disabled="jsonLoading || credentialsStatusType === 'info'" 

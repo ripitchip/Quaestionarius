@@ -110,6 +110,7 @@ def authenticate_google(credentials_json: str = None) -> dict:
 def check_auth_status() -> dict:
     """
     Check if user is already authenticated.
+    Reads credentials from stdin if provided.
     
     Returns:
         dict: Authentication status
@@ -117,9 +118,10 @@ def check_auth_status() -> dict:
     try:
         storage_dir = get_storage_dir()
         token_file = storage_dir / "token.pickle"
-        credentials_file = storage_dir / "credentials.json"
         
-        has_credentials = credentials_file.exists()
+        # Try to read credentials from stdin
+        credentials_json = sys.stdin.read().strip()
+        has_credentials = bool(credentials_json)
         has_token = token_file.exists()
         
         if has_token:
