@@ -150,7 +150,7 @@ async function authenticateGoogle() {
 
 <template>
   <main class="container">
-    <h1>🔐 Quaestionarius</h1>
+    <h1><span class="emoji">🔐</span>Quaestionarius</h1>
     <p class="subtitle">Google Forms Authentication Manager</p>
 
     <div class="auth-status" :class="{ authenticated: isAuthenticated }">
@@ -214,6 +214,10 @@ h1 {
   text-align: center;
   margin-bottom: 5px;
   font-size: 2.5em;
+}
+
+h1 .emoji {
+  margin-right: 0.15em;
 }
 
 .subtitle {
@@ -399,7 +403,7 @@ button:disabled {
 
 <style>
 :root {
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
+  font-family: Inter, Avenir, Helvetica, Arial, sans-serif, "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji";
   font-size: 16px;
   line-height: 24px;
   font-weight: 400;

@@ -30,6 +30,8 @@ RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
         libfuse2 \
         file \
         appstream \
+        fonts-noto-color-emoji \
+        unzip \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # 4. Install Node.js (v20)
@@ -40,6 +42,13 @@ RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
 # 5. Setup Python Tools (Now pip will be found)
 RUN python3 -m pip install --upgrade pip --break-system-packages \
     && python3 -m pip install pyinstaller google-api-python-client google-auth-oauthlib --break-system-packages
+
+# Install JetBrains Mono Nerd Font system-wide
+RUN mkdir -p /usr/local/share/fonts/JetBrainsMonoNF \
+    && curl -fsSL https://github.com/ryanoasis/nerd-fonts/releases/download/v3.2.1/JetBrainsMono.zip -o /tmp/JetBrainsMono.zip \
+    && unzip -j /tmp/JetBrainsMono.zip "JetBrainsMonoNerdFont*Regular.ttf" "JetBrainsMonoNerdFont*Bold.ttf" -d /usr/local/share/fonts/JetBrainsMonoNF \
+    && fc-cache -f \
+    && rm /tmp/JetBrainsMono.zip
 
 # 6. Install Rust (for user vscode)
 USER vscode
