@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "tauri:clean": "rm -rf src-tauri/src/python_executables src-tauri/binaries src-tauri/.venv && echo '✅ Clean complete'",
+    "tauri:dev": "npm run tauri:clean && pnpm tauri dev"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

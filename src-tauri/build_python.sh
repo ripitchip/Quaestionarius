@@ -5,10 +5,6 @@ echo "🔨 Building Python executables with PyInstaller..."
 
 cd "$(dirname "$0")"
 
-# Clean old build artifacts
-echo "🧹 Cleaning old build artifacts..."
-rm -rf src/python_executables binaries .venv
-
 # Create virtual environment if it doesn't exist
 if [ ! -d ".venv" ]; then
     echo "📦 Creating virtual environment..."
