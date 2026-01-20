@@ -16,19 +16,9 @@ const routes = [
         component: () => import("./pages/Home.vue")
     },
     {
-        path: "/chat",
-        name: "chat",
-        component: () => import("./pages/Chat.vue")
-    },
-    {
         path: "/calendar",
         name: "calendar",
         component: () => import("./pages/Calendar.vue")
-    },
-    {
-        path: "/phone",
-        name: "phone",
-        component: () => import("./pages/Phone.vue")
     },
     {
         path: "/settings",

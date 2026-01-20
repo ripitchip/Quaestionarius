@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useRouter, useRoute } from 'vue-router';
-import { MessageSquare, Calendar, Phone, Settings, LayoutGrid } from 'lucide-vue-next';
+import { Calendar, Settings, LayoutGrid } from 'lucide-vue-next';
 import logoUrl from '../assets/vue.svg'; // Merged the logo import here
 
 const router = useRouter();
@@ -8,9 +8,7 @@ const route = useRoute();
 
 const menuItems = [
   { path: '/', icon: LayoutGrid },
-  { path: '/chat', icon: MessageSquare },
   { path: '/calendar', icon: Calendar },
-  { path: '/phone', icon: Phone },
   { path: '/settings', icon: Settings },
 ];
 </script>
