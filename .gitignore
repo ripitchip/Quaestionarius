@@ -7,6 +7,8 @@
 /src-tauri/src/python_bin
 /src-tauri/src/python_executables/
 /src-tauri/.venv
+build
+python_build
 
 # IDE
 .vscode/
@@ -24,6 +26,8 @@ node_modules/
 .pnpm-store
 dist/
 .pnpm-debug.log*
+
+*.pyc
 
 credentials.json
 .env

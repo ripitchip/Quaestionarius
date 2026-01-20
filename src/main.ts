@@ -16,9 +16,9 @@ const routes = [
         component: () => import("./pages/Home.vue")
     },
     {
-        path: "/calendar",
-        name: "calendar",
-        component: () => import("./pages/Calendar.vue")
+        path: "/template",
+        name: "template",
+        component: () => import("./pages/Template.vue")
     },
     {
         path: "/settings",

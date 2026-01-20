@@ -215,6 +215,35 @@ fn check_auth_status(app: AppHandle) -> Result<String, String> {
     Ok(stdout.to_string())
 }
 
+// Add this command to your existing Rust file
+#[tauri::command]
+fn generate_forms(
+    app: AppHandle,
+    template_name: String,
+    group_name: String,
+    participants_json: String,
+) -> Result<String, String> {
+    // Note: We use the same sidecar name as authenticate_google
+    let exe = resolve_sidecar(&app, "google_auth")?;
+
+    let output = Command::new(&exe)
+        .arg("generate")
+        .arg(&template_name)
+        .arg(&group_name)
+        .arg(&participants_json)
+        .output()
+        .map_err(|e| format!("Failed to execute sidecar: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("Sidecar failed: {}", stderr));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout.to_string())
+}
+
+// Update your run() function to register the new command
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -228,7 +257,8 @@ pub fn run() {
             save_credentials,
             get_saved_credentials,
             authenticate_google,
-            check_auth_status
+            check_auth_status,
+            generate_forms // <--- REGISTERED HERE
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

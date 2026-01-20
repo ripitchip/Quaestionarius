@@ -4,11 +4,14 @@
 import subprocess
 import os
 import sys
+import shutil
+import platform
 from pathlib import Path
 
-# Get the directory where this script is located
+# Get paths relative to script location
 SCRIPT_DIR = Path(__file__).parent
-BUILD_DIR = SCRIPT_DIR / "python_executables"
+TAURI_DIR = SCRIPT_DIR.parent
+BUILD_DIR = TAURI_DIR / "python_build"
 DIST_DIR = BUILD_DIR / "dist"
 
 # Create build directory
@@ -24,11 +27,14 @@ def build_executable(script_name: str, output_name: str, hidden_imports=None):
     
     print(f"\n🔨 Building {output_name}...")
     
+    # -c ensures Console mode so stdout works for Tauri
+    # Removed --nopreview which caused the error
     cmd = [
         sys.executable,
         "-m", "PyInstaller",
-        "--onefile",  # Single executable file
-        "--windowed",  # No console window
+        "--onefile",
+        "--clean",
+        "-c", 
         "--distpath", str(DIST_DIR),
         "--workpath", str(BUILD_DIR / "build"),
         "--specpath", str(BUILD_DIR),
@@ -36,7 +42,6 @@ def build_executable(script_name: str, output_name: str, hidden_imports=None):
         str(script_path),
     ]
     
-    # Add hidden imports if provided
     if hidden_imports:
         for module in hidden_imports:
             cmd.extend(["--hidden-import", module])
@@ -52,41 +57,41 @@ def build_executable(script_name: str, output_name: str, hidden_imports=None):
     return True
 
 def main():
-    """Build all Python executables"""
     print("🚀 Building portable Python executables...")
     
-    # Hidden imports for google_auth
-    google_auth_imports = [
+    # Core imports to ensure the binary doesn't crash silently
+    core_imports = ["json", "sys", "pathlib"]
+    google_auth_imports = core_imports + [
         "google_auth_oauthlib",
         "google_auth_oauthlib.flow",
         "googleapiclient",
         "googleapiclient.discovery",
         "google.auth",
-        "google.auth.transport",
         "google.auth.transport.requests",
-        "google.oauth2",
-        "google.oauth2.credentials",
-        "pickle",
-        "requests_oauthlib",
     ]
     
     success = True
     success &= build_executable("google_auth", "google_auth", google_auth_imports)
-    success &= build_executable("json_processor", "json_processor")
+    success &= build_executable("json_processor", "json_processor", core_imports)
     
     if success:
-        print(f"\n✅ All executables built successfully in {DIST_DIR}")
+        FINAL_BIN_DIR = TAURI_DIR / "binaries"
+        FINAL_BIN_DIR.mkdir(exist_ok=True)
         
-        # Copy executables to a more accessible location
-        OUTPUT_DIR = SCRIPT_DIR / "python_bin"
-        OUTPUT_DIR.mkdir(exist_ok=True)
-        
+        machine = platform.machine()
+        suffix_map = {
+            "x86_64": "x86_64-unknown-linux-gnu",
+            "aarch64": "aarch64-unknown-linux-gnu",
+            "arm64": "aarch64-apple-darwin"
+        }
+        suffix = suffix_map.get(machine, f"{machine}-unknown-linux-gnu")
+
         for exe_file in DIST_DIR.glob("*"):
             if exe_file.is_file():
-                dest = OUTPUT_DIR / exe_file.name
-                import shutil
+                dest = FINAL_BIN_DIR / f"{exe_file.name}-{suffix}"
                 shutil.copy2(exe_file, dest)
-                print(f"📦 Copied to {dest}")
+                os.chmod(dest, 0o755)
+                print(f"📦 Sidecar ready: {dest.name}")
     else:
         print("\n❌ Build failed")
         sys.exit(1)

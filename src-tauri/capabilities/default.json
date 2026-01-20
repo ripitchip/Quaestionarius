@@ -7,12 +7,36 @@
   ],
   "permissions": [
     "core:default",
+    "core:webview:default",
+    "core:window:default",
+    "core:event:default",
+    "core:path:default",
+    "fs:default",
+    "fs:allow-exists",
+    "fs:allow-mkdir",
+    "opener:default",
     "dialog:default",
     "dialog:allow-open",
     "dialog:allow-save",
-    "fs:default",
+    "fs:allow-read-dir",
+    "fs:allow-read-text-file",
     "fs:allow-write-text-file",
-    "opener:default",
+    {
+      "identifier": "fs:allow-appdata-read",
+      "allow": [
+        {
+          "path": "**"
+        }
+      ]
+    },
+    {
+      "identifier": "fs:allow-appdata-write",
+      "allow": [
+        {
+          "path": "**"
+        }
+      ]
+    },
     {
       "identifier": "shell:allow-execute",
       "allow": [
