@@ -1,3 +1,4 @@
+use serde_json::{json, Value};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -5,260 +6,163 @@ use tauri::path::BaseDirectory;
 use tauri::AppHandle;
 use tauri::Manager;
 
-// Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
-
+/// Helper to resolve sidecar path across different build environments (Dev vs Production)
 fn resolve_sidecar(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
     let triple = env!("TAURI_ENV_TARGET_TRIPLE");
+    let paths = [
+        app.path().resolve(name, BaseDirectory::Resource),
+        app.path().resolve(
+            format!("binaries/{}-{}", name, triple),
+            BaseDirectory::Resource,
+        ),
+        app.path()
+            .resolve(format!("binaries/{}", name), BaseDirectory::Resource),
+    ];
 
-    // Try plain name in resource bin directory (how Tauri v2 bundles for AppImage)
-    if let Ok(p) = app.path().resolve(name, BaseDirectory::Resource) {
-        if p.exists() {
-            return Ok(p);
+    for path_res in paths {
+        if let Ok(p) = path_res {
+            if p.exists() {
+                return Ok(p);
+            }
         }
     }
 
-    // Try target-triple suffixed path in binaries subdirectory (for other bundle types)
-    let rel_suffixed = format!("binaries/{}-{}", name, triple);
-    if let Ok(p) = app.path().resolve(rel_suffixed, BaseDirectory::Resource) {
-        if p.exists() {
-            return Ok(p);
-        }
-    }
-
-    // Try non-suffixed resource path in binaries subdirectory
-    let rel = format!("binaries/{}", name);
-    if let Ok(p) = app.path().resolve(rel, BaseDirectory::Resource) {
-        if p.exists() {
-            return Ok(p);
-        }
-    }
-
-    // Fallback to workspace path in dev (check both suffixed and plain)
     let dev_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries");
-    let dev_suffixed = dev_dir.join(format!("{}-{}", name, triple));
-    if dev_suffixed.exists() {
-        return Ok(dev_suffixed);
-    }
-    let dev_plain = dev_dir.join(name);
-    if dev_plain.exists() {
-        return Ok(dev_plain);
+    let dev_paths = [
+        dev_dir.join(format!("{}-{}", name, triple)),
+        dev_dir.join(name),
+    ];
+    for p in dev_paths {
+        if p.exists() {
+            return Ok(p);
+        }
     }
 
-    Err(format!(
-        "Sidecar not found: {} (checked resource and dev paths)",
-        name
-    ))
+    Err(format!("Sidecar {} not found", name))
 }
 
 #[tauri::command]
-fn validate_credentials_file(app: AppHandle, file_path: String) -> Result<String, String> {
-    let exe = resolve_sidecar(&app, "json_processor")?;
-
+fn list_sessions(app: AppHandle) -> Result<String, String> {
+    let exe = resolve_sidecar(&app, "google_auth")?;
     let output = Command::new(&exe)
-        .arg(&file_path)
+        .arg("list_sessions")
         .output()
-        .map_err(|e| format!("Failed to execute sidecar: {}", e))?;
+        .map_err(|e| e.to_string())?;
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Sidecar failed: {}", stderr));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(stdout.to_string())
+#[tauri::command]
+fn get_session_results(app: AppHandle, folder_id: String) -> Result<String, String> {
+    let exe = resolve_sidecar(&app, "google_auth")?;
+    let output = Command::new(&exe)
+        .arg("get_session_results")
+        .arg(folder_id)
+        .output()
+        .map_err(|e| e.to_string())?;
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 #[tauri::command]
 fn save_credentials(app: AppHandle, file_path: String) -> Result<String, String> {
-    // First validate the credentials file
-    let validation_result = validate_credentials_file(app.clone(), file_path.clone())?;
+    let content = fs::read_to_string(&file_path).map_err(|e| e.to_string())?;
 
-    // Parse validation result to check status
-    let validation: serde_json::Value = serde_json::from_str(&validation_result)
-        .map_err(|e| format!("Failed to parse validation result: {}", e))?;
+    // Validate JSON structure locally before saving
+    let _: Value =
+        serde_json::from_str(&content).map_err(|_| "Invalid JSON format in credentials file")?;
 
-    if validation["status"] != "success" {
-        return Err(validation["message"]
-            .as_str()
-            .unwrap_or("Validation failed")
-            .to_string());
-    }
-
-    // Read the credentials file
-    let credentials_content = fs::read_to_string(&file_path)
-        .map_err(|e| format!("Failed to read credentials file: {}", e))?;
-
-    // Get app data directory
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data directory: {}", e))?;
-
-    // Ensure the directory exists
-    fs::create_dir_all(&app_data_dir)
-        .map_err(|e| format!("Failed to create app data directory: {}", e))?;
-
-    // Save to app data directory atomically
-    use std::fs::File;
-    use std::io::Write;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    fs::create_dir_all(&app_data_dir).map_err(|e| e.to_string())?;
     let saved_path = app_data_dir.join("credentials.json");
-    let tmp_path = app_data_dir.join(format!(
-        "credentials.json.tmp-{}",
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis()
-    ));
-    {
-        let mut tmp_file = File::create(&tmp_path)
-            .map_err(|e| format!("Failed to create temp credentials file: {}", e))?;
-        tmp_file
-            .write_all(credentials_content.as_bytes())
-            .map_err(|e| format!("Failed to write credentials: {}", e))?;
-        tmp_file
-            .sync_all()
-            .map_err(|e| format!("Failed to sync credentials: {}", e))?;
-    }
-    std::fs::rename(&tmp_path, &saved_path)
-        .map_err(|e| format!("Failed to move credentials into place: {}", e))?;
+    fs::write(&saved_path, content).map_err(|e| e.to_string())?;
 
-    let result = serde_json::json!({
-        "status": "success",
-        "message": "Credentials saved successfully",
-        "location": saved_path.to_string_lossy()
-    });
-
-    Ok(result.to_string())
-}
-
-#[tauri::command]
-fn get_saved_credentials(app: AppHandle) -> Result<String, String> {
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| format!("Failed to get app data directory: {}", e))?;
-
-    let saved_path = app_data_dir.join("credentials.json");
-
-    if !saved_path.exists() {
-        let result = serde_json::json!({
-            "status": "not_found",
-            "message": "No saved credentials found"
-        });
-        return Ok(result.to_string());
-    }
-
-    let result = serde_json::json!({
-        "status": "found",
-        "path": saved_path.to_string_lossy()
-    });
-
-    Ok(result.to_string())
+    Ok(json!({"status": "success", "location": saved_path.to_string_lossy()}).to_string())
 }
 
 #[tauri::command]
 fn authenticate_google(app: AppHandle, credentials_path: Option<String>) -> Result<String, String> {
     let exe = resolve_sidecar(&app, "google_auth")?;
-
-    // Use provided path or get saved credentials
-    let creds_path = if let Some(path) = credentials_path {
-        path
-    } else {
-        let app_data_dir = app
-            .path()
-            .app_data_dir()
-            .map_err(|e| format!("Failed to get app data directory: {}", e))?;
-        let saved_path = app_data_dir.join("credentials.json");
-
-        if !saved_path.exists() {
-            return Err("No credentials found. Please save credentials first.".to_string());
+    let creds_path = match credentials_path {
+        Some(path) => path,
+        None => {
+            let p = app
+                .path()
+                .app_data_dir()
+                .map_err(|e| e.to_string())?
+                .join("credentials.json");
+            if !p.exists() {
+                return Err("No credentials found. Please upload credentials.json first.".into());
+            }
+            p.to_string_lossy().to_string()
         }
-
-        saved_path.to_string_lossy().to_string()
     };
 
     let output = Command::new(&exe)
         .arg("authenticate")
         .arg(&creds_path)
         .output()
-        .map_err(|e| format!("Failed to execute sidecar: {}", e))?;
+        .map_err(|e| format!("Failed to run authenticator: {}", e))?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Sidecar failed: {}", stderr));
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(stdout.to_string())
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 #[tauri::command]
 fn check_auth_status(app: AppHandle) -> Result<String, String> {
     let exe = resolve_sidecar(&app, "google_auth")?;
-
     let output = Command::new(&exe)
         .arg("check_status")
         .output()
-        .map_err(|e| format!("Failed to execute sidecar: {}", e))?;
+        .map_err(|e| e.to_string())?;
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("Sidecar failed: {}", stderr));
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+
+    if stdout.trim().is_empty() {
+        return Ok(
+            json!({"status": "not_authenticated", "message": "No response from sidecar"})
+                .to_string(),
+        );
     }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(stdout.to_string())
+    Ok(stdout)
 }
 
-// Add this command to your existing Rust file
 #[tauri::command]
-fn generate_forms(
+fn start_batch_generation(
     app: AppHandle,
     template_name: String,
-    group_name: String,
-    participants_json: String,
+    group_data_json: String,
+    variables_json: String,
 ) -> Result<String, String> {
-    // Note: We use the same sidecar name as authenticate_google
     let exe = resolve_sidecar(&app, "google_auth")?;
 
     let output = Command::new(&exe)
-        .arg("generate")
+        .arg("batch_generate")
         .arg(&template_name)
-        .arg(&group_name)
-        .arg(&participants_json)
+        .arg(&group_data_json)
+        .arg(&variables_json)
         .output()
-        .map_err(|e| format!("Failed to execute sidecar: {}", e))?;
+        .map_err(|e| format!("Sidecar execution error: {}", e))?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!("Sidecar failed: {}", stderr));
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(stdout.to_string())
+    Ok(stdout)
 }
 
-// Update your run() function to register the new command
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
-            greet,
-            validate_credentials_file,
             save_credentials,
-            get_saved_credentials,
             authenticate_google,
             check_auth_status,
-            generate_forms // <--- REGISTERED HERE
+            start_batch_generation,
+            list_sessions,
+            get_session_results
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

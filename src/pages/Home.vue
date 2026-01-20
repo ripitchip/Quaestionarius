@@ -1,71 +1,161 @@
 <script setup lang="ts">
-import { ref, computed } from "vue";
+import { ref, computed, onMounted, watch } from "vue";
+import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import { readFile } from "@tauri-apps/plugin-fs";
-import { Trash2, UploadCloud, Users, Mail, Hash } from "lucide-vue-next";
+import { readFile, readDir, readTextFile, BaseDirectory } from "@tauri-apps/plugin-fs";
+import { 
+  Trash2, UploadCloud, Users, Mail, Hash, 
+  FileJson, Play, Eye, CheckCircle2, Settings2, X, Loader2
+} from "lucide-vue-next";
 import Papa from "papaparse";
 
 interface Participant {
-  Name: string;
-  LastName: string;
-  Email: string;
-  Group: string;
-  id?: string;
+  Name: string; LastName: string; Email: string; Group: string; id?: string;
+}
+
+interface Template {
+  name: string; filename: string; content: any;
 }
 
 const csvData = ref<Participant[]>([]);
 const fileName = ref("");
+const templates = ref<Template[]>([]);
+const selectedTemplate = ref<Template | null>(null);
+const isPreviewing = ref(false);
+const isGenerating = ref(false);
 
-// Groups flat list into a Record<GroupName, Participant[]>
+// Variable Discovery
+const templateVars = ref<Record<string, string>>({});
+const previewGroupIndex = ref(0);
+const RESERVED_VARS = ['full_team_list', 'group_name', 'member_name'];
+
+/**
+ * Scans JSON for variables and pre-fills the bilingual proposition
+ */
+const scanVariables = () => {
+  if (!selectedTemplate.value) return;
+  const content = selectedTemplate.value.content;
+  const str = JSON.stringify(content);
+  const regex = /\{\{(.+?)\}\}/g;
+  const found: Record<string, string> = {};
+  let match;
+
+  while ((match = regex.exec(str)) !== null) {
+    const varName = match[1];
+    if (!RESERVED_VARS.includes(varName)) {
+      if (varName === 'max_value') {
+        found[varName] = templateVars.value[varName] || "10";
+      } else {
+        found[varName] = templateVars.value[varName] || "";
+      }
+    }
+  }
+
+  if (content.proposition && found['prompt_text'] !== undefined) {
+      found['prompt_text'] = content.proposition;
+  }
+
+  templateVars.value = found;
+};
+
+watch(selectedTemplate, scanVariables);
+
 const groupedParticipants = computed(() => {
   return csvData.value.reduce((acc, person) => {
-    const groupName = person.Group || "Unassigned";
-    if (!acc[groupName]) acc[groupName] = [];
-    acc[groupName].push(person);
+    const g = person.Group || "General";
+    if (!acc[g]) acc[g] = [];
+    acc[g].push(person);
     return acc;
   }, {} as Record<string, Participant[]>);
 });
 
-async function handleFileImport() {
+const groupNames = computed(() => Object.keys(groupedParticipants.value));
+const currentPreviewGroup = computed(() => groupNames.value[previewGroupIndex.value]);
+
+const formatPreviewText = (text: string | undefined) => {
+  if (!text || !currentPreviewGroup.value) return '';
+  let res = text.replace(/\{\{group_name\}\}/g, currentPreviewGroup.value);
+  
+  const applyVars = (input: string) => {
+    let output = input;
+    Object.keys(templateVars.value).forEach(v => {
+      const regex = new RegExp(`\\{\\{${v}\\}\\}`, 'g');
+      output = output.replace(regex, templateVars.value[v] || `[${v}]`);
+    });
+    return output;
+  };
+
+  res = applyVars(res);
+  return applyVars(res);
+};
+
+// --- API ACTIONS ---
+
+async function handleGenerate() {
+  if (!selectedTemplate.value || isGenerating.value) return;
+
+  isGenerating.value = true;
   try {
-    const selected = await open({
-      multiple: false,
-      filters: [{ name: "CSV", extensions: ["csv"] }],
+    const result: string = await invoke("start_batch_generation", {
+      templateName: selectedTemplate.value.filename,
+      groupDataJson: JSON.stringify(groupedParticipants.value),
+      variablesJson: JSON.stringify(templateVars.value)
     });
 
-    if (!selected || Array.isArray(selected)) return;
-
-    fileName.value = selected.split(/[\\/]/).pop() || "";
-    const contents = await readFile(selected);
-    const decoder = new TextDecoder("utf-8");
-    const csvText = decoder.decode(contents);
-    
-    parseCsvData(csvText);
+    const parsed = JSON.parse(result);
+    if (parsed.status === "success") {
+      alert(`Success! Generated ${parsed.forms.length} team forms inside a new Google Drive folder.`);
+    } else {
+      alert("Error: " + parsed.message);
+    }
   } catch (error) {
-    console.error("Import failed:", error);
+    alert("Generation failed: " + error);
+  } finally {
+    isGenerating.value = false;
   }
 }
 
-function parseCsvData(content: string) {
+async function handleFileImport() {
+  try {
+    const selected = await open({ multiple: false, filters: [{ name: "CSV", extensions: ["csv"] }] });
+    if (!selected || Array.isArray(selected)) return;
+    fileName.value = selected.split(/[\\/]/).pop() || "";
+    const contents = await readFile(selected);
+    parseCsv(new TextDecoder("utf-8").decode(contents));
+    loadTemplates();
+  } catch (e) { console.error(e); }
+}
+
+function parseCsv(content: string) {
   Papa.parse(content, {
-    header: true,
-    skipEmptyLines: true,
-    complete: (results) => {
-      csvData.value = results.data.map((row: any) => ({
-        Name: row.Name || "Unknown",
-        LastName: row.LastName || "",
-        Email: "demo@foobarbaz.fr", // Strict override for safety
-        Group: row.Group || "General",
+    header: true, skipEmptyLines: true,
+    complete: (r) => {
+      csvData.value = r.data.map((row: any) => ({
+        Name: row.Name || "Unknown", LastName: row.LastName || "",
+        Email: "demo@foobarbaz.fr", Group: row.Group || "General",
         id: row.id || Math.floor(Math.random() * 1000).toString()
       }));
     },
   });
 }
 
-function resetData() {
-  csvData.value = [];
-  fileName.value = "";
+async function loadTemplates() {
+  try {
+    const entries = await readDir('templates', { baseDir: BaseDirectory.AppData });
+    const loaded: Template[] = [];
+    for (const e of entries) {
+      if (e.name?.endsWith('.json')) {
+        const raw = await readTextFile(`templates/${e.name}`, { baseDir: BaseDirectory.AppData });
+        const json = JSON.parse(raw);
+        loaded.push({ name: json.name || e.name, filename: e.name, content: json });
+      }
+    }
+    templates.value = loaded;
+  } catch (e) { console.error(e); }
 }
+
+const reset = () => { csvData.value = []; fileName.value = ""; selectedTemplate.value = null; };
+onMounted(loadTemplates);
 </script>
 
 <template>
@@ -73,182 +163,162 @@ function resetData() {
     <header class="page-header">
       <div class="header-text">
         <h1>Dashboard</h1>
-        <div v-if="csvData.length > 0" class="meta-row">
+        <div v-if="csvData.length" class="meta-row">
           <span class="pill-badge"><Users :size="12" /> {{ csvData.length }} Entries</span>
-          <span class="pill-badge">👥 {{ Object.keys(groupedParticipants).length }} Teams</span>
+          <span class="pill-badge">👥 {{ groupNames.length }} Teams</span>
         </div>
       </div>
-      
-      <div v-if="csvData.length > 0" class="active-file-tag">
+      <div v-if="csvData.length" class="active-file-tag">
         <span class="filename-text">{{ fileName }}</span>
-        <button class="btn-clear-red" @click="resetData">
-          <Trash2 :size="12" />
-        </button>
+        <button class="btn-clear" @click="reset"><Trash2 :size="12" /></button>
       </div>
     </header>
 
-    <div v-if="csvData.length === 0" class="upload-hero-container" @click="handleFileImport">
+    <div v-if="!csvData.length" class="upload-hero" @click="handleFileImport">
       <div class="hero-inner">
-        <div class="icon-blob">
-          <UploadCloud :size="32" />
-        </div>
+        <div class="icon-blob"><UploadCloud :size="32" /></div>
         <h2>Import Participant CSV</h2>
-        <p>Required: Name, LastName, Group, id</p>
-        <div class="demo-warning">
-          Emails automatically set to demo@foobarbaz.fr
-        </div>
       </div>
     </div>
 
-    <div v-else class="carousel-viewport">
-      <div v-for="(members, groupName) in groupedParticipants" :key="groupName" class="group-card">
-        <div class="card-head">
-          <h3 class="group-label">{{ groupName }}</h3>
-          <span class="count-tag">{{ members.length }}</span>
+    <div v-else class="main-content">
+      <div class="carousel-viewport">
+        <div v-for="(members, g) in groupedParticipants" :key="g" class="group-card">
+          <div class="card-head">
+            <h3 class="group-label">{{ g }}</h3>
+            <span class="count-tag">{{ members.length }}</span>
+          </div>
+          <div class="member-scroller">
+            <div v-for="p in members" :key="p.id" class="member-tile">
+              <div class="avatar-box">{{ p.Name[0] }}{{ p.LastName[0] }}</div>
+              <div class="text-stack">
+                <span class="full-name">{{ p.Name }} {{ p.LastName }}</span>
+              </div>
+            </div>
+          </div>
         </div>
-        
-        <div class="member-scroller">
-          <div v-for="person in members" :key="person.id" class="member-tile">
-            <div class="avatar-box">
-              {{ person.Name[0] }}{{ person.LastName[0] }}
+      </div>
+
+      <div class="config-grid">
+        <div class="config-pane">
+          <div class="section-label">1. Choose Template</div>
+          <div class="template-list">
+            <div v-for="tpl in templates" :key="tpl.filename" 
+                 class="tpl-option" :class="{ active: selectedTemplate?.filename === tpl.filename }"
+                 @click="selectedTemplate = tpl">
+              <CheckCircle2 v-if="selectedTemplate?.filename === tpl.filename" :size="14" />
+              <FileJson v-else :size="14" />
+              <span>{{ tpl.name }}</span>
             </div>
-            <div class="text-stack">
-              <span class="full-name">{{ person.Name }} {{ person.LastName }}</span>
-              <span class="email-sub"><Mail :size="10" /> {{ person.Email }}</span>
+          </div>
+        </div>
+
+        <div class="config-pane">
+          <div class="section-label">2. Define Parameters</div>
+          <div v-if="Object.keys(templateVars).length" class="vars-list">
+            <div v-for="(val, k) in templateVars" :key="k" class="var-field">
+              <label><Settings2 :size="12" /> {{ k.replace('_', ' ') }}</label>
+              <textarea v-if="k === 'prompt_text'" v-model="templateVars[k]" rows="4"></textarea>
+              <input v-else type="text" v-model="templateVars[k]" />
             </div>
-            <span class="id-dim">#{{ person.id }}</span>
+          </div>
+          <div v-else class="var-empty">Select a template</div>
+        </div>
+      </div>
+
+      <transition name="slide-up">
+        <div v-if="selectedTemplate" class="action-bar">
+          <div class="action-info">
+            <p>Ready to generate <b>{{ groupNames.length }}</b> shared team forms.</p>
+            <span class="sub-label">Files will be stored in a dedicated Drive subfolder.</span>
+          </div>
+          <div class="action-btns">
+            <button class="btn-preview" @click="isPreviewing = true" :disabled="isGenerating"><Eye :size="16" /> Preview Team View</button>
+            <button class="btn-launch" :disabled="isGenerating || Object.values(templateVars).some(v => !v)" @click="handleGenerate">
+              <Loader2 v-if="isGenerating" :size="16" class="spin-icon" />
+              <span v-else>Start Generation</span>
+            </button>
+          </div>
+        </div>
+      </transition>
+    </div>
+
+    <div v-if="isPreviewing" class="modal-overlay">
+      <div class="modal-window">
+        <header class="modal-header">
+          <div class="modal-title-group">
+            <h3>Team Form Simulation</h3>
+            <div class="user-switcher">
+              <span>View Team:</span>
+              <select v-model="previewGroupIndex">
+                <option v-for="(name, i) in groupNames" :key="name" :value="i">{{ name }}</option>
+              </select>
+            </div>
+          </div>
+          <button class="close-btn" @click="isPreviewing = false"><X :size="20" /></button>
+        </header>
+
+        <div class="modal-body">
+          <div class="google-form-mock">
+            <div class="form-accent"></div>
+            <div class="mock-card head-card">
+              <h1 class="mock-title">Team: {{ currentPreviewGroup }}</h1>
+              <p class="mock-desc">{{ formatPreviewText(templateVars['prompt_text']) }}</p>
+            </div>
+            <div v-for="p in groupedParticipants[currentPreviewGroup]" :key="p.id" class="mock-card">
+              <div class="mock-q">
+                <label>Potatoes for <b>{{ p.Name }} {{ p.LastName }}</b>?</label>
+                <div class="mock-input-field">Short answer text</div>
+                <div class="mock-validation">Must be a whole number between 0 and {{ templateVars['max_value'] || '10' }}</div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
     </div>
-
-    <footer class="page-footer">
-      <p><Hash :size="12" /> Environment: Local File Parsing Mode</p>
-    </footer>
   </div>
 </template>
 
 <style scoped>
-.page-container {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-  padding: 1.25rem;
-  overflow: hidden; /* Prevent vertical scroll on the whole page */
-}
+.page-container { height: 100vh; display: flex; flex-direction: column; padding: 1.25rem; overflow: hidden; background: #fff; }
+.page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem; }
+h1 { font-size: 1.25rem; font-weight: 800; }
 
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 1.5rem;
-}
+.upload-hero { margin-top: 2rem; flex: 0 0 250px; border: 2px dashed #cbd5e1; border-radius: 16px; display: flex; align-items: center; justify-content: center; cursor: pointer; background: #f8fafc; }
+.carousel-viewport { display: flex; gap: 1rem; overflow-x: auto; padding: 5px 0 15px 0; scroll-snap-type: x mandatory; }
+.group-card { flex: 0 0 260px; scroll-snap-align: start; background: white; border: 1px solid #e2e8f0; border-radius: 14px; height: 320px; display: flex; flex-direction: column; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); }
+.card-head { padding: 12px; border-bottom: 1px solid #f1f5f9; display: flex; justify-content: space-between; align-items: center; background: #f8fafc; border-radius: 14px 14px 0 0; }
 
-h1 { font-size: 1.35rem; font-weight: 800; margin: 0; }
-.meta-row { display: flex; gap: 8px; margin-top: 4px; }
-.pill-badge { 
-  font-size: 0.7rem; background: #f1f5f9; padding: 2px 8px; 
-  border-radius: 6px; color: #475569; display: flex; align-items: center; gap: 4px;
-  font-weight: 600;
-}
+.config-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem; }
+.config-pane { background: white; border: 1px solid #e2e8f0; border-radius: 16px; padding: 1.25rem; min-height: 180px; display: flex; flex-direction: column; }
+.section-label { font-size: 0.7rem; font-weight: 800; color: #94a3b8; text-transform: uppercase; margin-bottom: 1rem; }
 
-.active-file-tag {
-  display: flex; align-items: center; gap: 8px; background: white;
-  padding: 4px 4px 4px 12px; border-radius: 8px; border: 1px solid #e2e8f0;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-}
-.filename-text { font-size: 0.75rem; font-weight: 700; color: #64748b; }
-.btn-clear-red { 
-  background: #fee2e2; border: none; color: #ef4444; 
-  cursor: pointer; border-radius: 6px; padding: 6px; display: flex; 
-}
+.tpl-option { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 8px; cursor: pointer; font-size: 0.85rem; font-weight: 600; color: #64748b; }
+.tpl-option.active { background: #ede9fe; color: #673ab7; }
 
-/* --- The Carousel [Horizontal Scroller] --- */
-.carousel-viewport {
-  display: flex;
-  gap: 1.25rem;
-  overflow-x: auto;
-  padding: 5px 0 20px 0; /* Space for scrollbar */
-  scroll-snap-type: x mandatory;
-  scrollbar-width: thin;
-  scrollbar-color: #cbd5e1 transparent;
-}
+.var-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.var-field label { font-size: 0.7rem; font-weight: 700; color: #64748b; text-transform: uppercase; }
+.var-field input, .var-field textarea { background: #f8fafc; border: 1px solid #e2e8f0; padding: 8px; border-radius: 8px; font-size: 0.85rem; outline: none; transition: 0.2s; }
+.var-field textarea { font-family: inherit; resize: none; }
 
-/* Webkit Scrollbar Styling */
-.carousel-viewport::-webkit-scrollbar { height: 8px; }
-.carousel-viewport::-webkit-scrollbar-track { background: #f8fafc; border-radius: 10px; }
-.carousel-viewport::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
-.carousel-viewport::-webkit-scrollbar-thumb:hover { background: #6366f1; }
+.action-bar { margin-top: auto; background: white; border: 1px solid #e2e8f0; border-radius: 16px; padding: 1rem 1.5rem; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); }
+.action-info { display: flex; flex-direction: column; }
+.sub-label { font-size: 0.7rem; color: #94a3b8; margin-top: 2px; }
+.btn-launch { background: #6366f1; color: white; border: none; padding: 10px 20px; border-radius: 10px; font-weight: 800; cursor: pointer; display: flex; align-items: center; gap: 8px; }
+.btn-launch:disabled { background: #cbd5e1; cursor: not-allowed; }
 
-.group-card {
-  flex: 0 0 280px; /* Essential: keeps cards from shrinking */
-  scroll-snap-align: start;
-  background: white;
-  border: 1px solid #e2e8f0;
-  border-radius: 14px;
-  display: flex;
-  flex-direction: column;
-  height: 380px;
-  box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05);
-}
+.modal-overlay { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(4px); z-index: 2000; display: flex; align-items: center; justify-content: center; }
+.modal-window { background: #f0ebf8; width: 90%; max-width: 600px; height: 80vh; border-radius: 20px; display: flex; flex-direction: column; overflow: hidden; }
+.modal-header { background: white; padding: 1rem 1.5rem; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e2e8f0; }
+.google-form-mock { width: 100%; max-width: 480px; margin: 0 auto; }
+.form-accent { height: 10px; background: #673ab7; border-radius: 8px 8px 0 0; margin-bottom: 12px; }
+.mock-card { background: white; padding: 20px; border-radius: 8px; border: 1px solid #dadce0; margin-bottom: 10px; }
+.mock-input-field { border-bottom: 1px solid #dadce0; color: #70757a; font-size: 0.85rem; padding: 10px 0; width: 60%; margin-top: 15px; }
 
-.card-head {
-  padding: 14px;
-  border-bottom: 1px solid #f1f5f9;
-  display: flex; justify-content: space-between; align-items: center;
-  background: #f8fafc; border-radius: 14px 14px 0 0;
-}
-.group-label { font-size: 0.85rem; font-weight: 800; color: #1e293b; margin: 0; }
-.count-tag { background: #6366f1; color: white; font-size: 0.7rem; padding: 2px 8px; border-radius: 6px; font-weight: 700; }
+.avatar-box { width: 30px; height: 30px; background: #f1f5f9; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 0.7rem; font-weight: 800; color: #6366f1; }
+.pill-badge { font-size: 0.7rem; background: #f1f5f9; padding: 2px 8px; border-radius: 6px; color: #475569; display: flex; align-items: center; gap: 4px; font-weight: 600; }
+.active-file-tag { display: flex; align-items: center; gap: 8px; background: white; padding: 4px 4px 4px 12px; border-radius: 8px; border: 1px solid #e2e8f0; }
 
-.member-scroller {
-  flex: 1;
-  overflow-y: auto;
-  padding: 10px;
-}
-
-.member-tile {
-  display: flex; align-items: center; gap: 10px;
-  padding: 8px; border-radius: 10px; margin-bottom: 6px;
-  transition: background 0.2s;
-}
-.member-tile:hover { background: #f8fafc; }
-
-.avatar-box {
-  width: 30px; height: 30px; background: white; border: 1.5px solid #f1f5f9;
-  border-radius: 8px; display: flex; align-items: center;
-  justify-content: center; font-size: 0.7rem; font-weight: 800; color: #6366f1;
-}
-
-.text-stack { display: flex; flex-direction: column; flex: 1; }
-.full-name { font-size: 0.8rem; font-weight: 700; color: #334155; }
-.email-sub { font-size: 0.65rem; color: #94a3b8; display: flex; align-items: center; gap: 3px; }
-.id-dim { font-size: 0.6rem; font-family: monospace; color: #cbd5e1; }
-
-/* --- Upload State --- */
-.upload-hero-container {
-  flex: 1; max-height: 250px; border: 2px dashed #cbd5e1;
-  border-radius: 16px; display: flex; flex-direction: column;
-  align-items: center; justify-content: center; cursor: pointer;
-  background: #f8fafc; margin: auto 0;
-}
-.upload-hero-container:hover { border-color: #6366f1; background: #f5f7ff; }
-.icon-blob { width: 64px; height: 64px; background: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-bottom: 1rem; color: #6366f1; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
-.demo-warning { margin-top: 1rem; font-size: 0.7rem; color: #3b82f6; background: #eff6ff; padding: 4px 10px; border-radius: 20px; font-weight: 600; }
-
-.page-footer {
-  margin-top: auto; padding-top: 1rem;
-  font-size: 0.7rem; color: #94a3b8;
-  border-top: 1px solid #f1f5f9;
-  display: flex; align-items: center;
-}
-
-@media (prefers-color-scheme: dark) {
-  .group-card, .active-file-tag, .upload-hero-container { background: #1a1a26; border-color: #2d2d3d; }
-  .card-head { background: #232335; border-bottom-color: #2d2d3d; }
-  .member-tile:hover { background: #2d2d3d; }
-  .full-name { color: #e2e8f0; }
-  .pill-badge { background: #252538; color: #94a3b8; }
-  .avatar-box { background: #1a1a26; border-color: #2d2d3d; }
-}
+.spin-icon { animation: spin 1s linear infinite; }
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
 </style>

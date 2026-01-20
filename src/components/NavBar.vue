@@ -8,6 +8,7 @@ const route = useRoute();
 
 const menuItems = [
   { path: '/', icon: LayoutGrid },
+  { path: '/results', icon: LayoutGrid },
   { path: '/template', icon: Layout },
   { path: '/settings', icon: Settings },
 ];
