@@ -4,11 +4,16 @@ import io
 import json
 import pickle
 import platform
+import smtplib
 from datetime import datetime
 from pathlib import Path
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from google.auth.transport.requests import Request
+from email.utils import formatdate, make_msgid
+import time
 
 SCOPES = [
     "https://www.googleapis.com/auth/forms.body",
@@ -62,20 +67,57 @@ def check_auth_status():
     return {"status": "not_authenticated"}
 
 def get_or_create_parent_folder(drive_service):
-    """Finds or creates the master 'queastonarius' folder."""
     query = "name = 'queastonarius' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
     response = drive_service.files().list(q=query, spaces='drive', fields='files(id)').execute()
     files = response.get('files', [])
-    
     if files:
         return files[0].get('id')
     else:
-        folder_meta = {
-            'name': 'queastonarius',
-            'mimeType': 'application/vnd.google-apps.folder'
-        }
+        folder_meta = {'name': 'queastonarius', 'mimeType': 'application/vnd.google-apps.folder'}
         folder = drive_service.files().create(body=folder_meta, fields='id').execute()
         return folder.get('id')
+
+# --- NEW EMAIL LOGIC ---
+def send_emails(email_settings_json, group_data_json, form_results_json):
+    try:
+        config = json.loads(email_settings_json)
+        groups = json.loads(group_data_json)
+        forms = json.loads(form_results_json)
+        url_map = {item['group']: item['url'] for item in forms}
+
+        # Connect to OVH
+        server = smtplib.SMTP(config['smtp_server'], int(config['smtp_port']))
+        server.set_debuglevel(0) # Keep it quiet
+        server.starttls()
+        server.login(config['smtp_user'], config['smtp_password'])
+
+        for group_name, members in groups.items():
+            form_url = url_map.get(group_name)
+            if not form_url: continue
+
+            for member in members:
+                recipient = member.get('Email')
+                if not recipient or "@" not in recipient: continue
+
+                msg = MIMEMultipart()
+                msg['From'] = f"Queastonarius <{config['smtp_user']}>"
+                msg['To'] = recipient
+                msg['Date'] = formatdate(localtime=True)
+                msg['Message-ID'] = make_msgid()
+                msg['Subject'] = f"Action Required: Evaluation for {group_name}"
+
+                body = f"Hello {member['Name']},\n\nLink: {form_url}"
+                msg.attach(MIMEText(body, 'plain'))
+
+                server.send_message(msg)
+                
+                # --- THE FIX: WAIT 1.5 SECONDS BETWEEN EMAILS ---
+                time.sleep(3) 
+
+        server.quit()
+        return {"status": "success", "message": "Emails sent"}
+    except Exception as e:
+        return {"status": "error", "message": f"SMTP Error: {str(e)}"}
 
 def batch_generate(template_name, group_data_json, variables_json):
     try:
@@ -88,35 +130,25 @@ def batch_generate(template_name, group_data_json, variables_json):
         max_val = vars_dict.get("max_value", "10")
         prompt = vars_dict.get("prompt_text", "").replace("{{max_value}}", max_val)
 
-        # 1. Get or Create the MASTER folder
         master_folder_id = get_or_create_parent_folder(drive_service)
 
-        # 2. Create the SESSION folder INSIDE the master folder
         session_folder_meta = {
-            'name': f"Potatoes Session - {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+            'name': f"Session - {datetime.now().strftime('%Y-%m-%d %H:%M')}",
             'mimeType': 'application/vnd.google-apps.folder',
-            'parents': [master_folder_id] # This puts it inside queastonarius immediately
+            'parents': [master_folder_id]
         }
         session_folder = drive_service.files().create(body=session_folder_meta, fields='id, webViewLink').execute()
         session_folder_id = session_folder.get('id')
 
         results = []
         for group_name, members in groups.items():
-            # 3. Create the Form
             form_title = f"Team Evaluation: {group_name}"
-            form_body = {
-                "info": {
-                    "title": form_title,
-                    "documentTitle": form_title 
-                }
-            }
+            form_body = {"info": {"title": form_title, "documentTitle": form_title}}
             new_form = forms_service.forms().create(body=form_body).execute()
             f_id = new_form['formId']
 
-            # 4. Move Form to the SESSION folder
             f_file = drive_service.files().get(fileId=f_id, fields='parents').execute()
             previous_parents = ",".join(f_file.get('parents', []))
-            
             drive_service.files().update(
                 fileId=f_id, 
                 addParents=session_folder_id, 
@@ -124,22 +156,17 @@ def batch_generate(template_name, group_data_json, variables_json):
                 fields='id, parents'
             ).execute()
 
-            # 5. Add Questions
-            requests = [
-                {"updateFormInfo": {"info": {"description": prompt}, "updateMask": "description"}}
-            ]
+            requests = [{"updateFormInfo": {"info": {"description": prompt}, "updateMask": "description"}}]
             for i, member in enumerate(members):
-                full_name = f"{member['Name']} {member['LastName']}"
                 requests.append({
                     "createItem": {
                         "item": {
-                            "title": f"Patates pour / Potatoes for: {full_name}",
+                            "title": f"Potatoes for / Patates pour: {member['Name']} {member['LastName']}",
                             "questionItem": {"question": {"required": True, "textQuestion": {"paragraph": False}}}
                         },
                         "location": {"index": i}
                     }
                 })
-
             forms_service.forms().batchUpdate(formId=f_id, body={"requests": requests}).execute()
             results.append({"group": group_name, "url": new_form.get('responderUri')})
 
@@ -150,13 +177,10 @@ def batch_generate(template_name, group_data_json, variables_json):
         }
     except Exception as e:
         return {"status": "error", "message": str(e)}
-
 def list_sessions():
-    """Lists subfolders inside the master 'queastonarius' folder."""
     try:
         _, drive_service = get_services()
         master_id = get_or_create_parent_folder(drive_service)
-        
         query = f"'{master_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
         results = drive_service.files().list(q=query, fields="files(id, name, createdTime)").execute()
         return {"status": "success", "sessions": results.get('files', [])}
@@ -164,23 +188,18 @@ def list_sessions():
         return {"status": "error", "message": str(e)}
 
 def get_session_results(session_folder_id):
-    """Aggregates responses from all forms within a session folder."""
     try:
         forms_service, drive_service = get_services()
-        
         query = f"'{session_folder_id}' in parents and mimeType = 'application/vnd.google-apps-form' and trashed = false"
         forms_in_session = drive_service.files().list(q=query, fields="files(id, name)").execute().get('files', [])
-        
         all_results = []
         for f in forms_in_session:
             form_id = f['id']
-            # Map Question IDs to Titles
             form_meta = forms_service.forms().get(formId=form_id).execute()
             question_map = {q['question']['questionId']: item['title'] 
                            for item in form_meta.get('items', []) 
                            if 'questionItem' in item 
                            for q in [item['questionItem']]}
-            
             responses = forms_service.forms().responses().list(formId=form_id).execute().get('responses', [])
             for resp in responses:
                 entry = {"form_name": f['name'], "timestamp": resp['createTime']}
@@ -188,7 +207,6 @@ def get_session_results(session_folder_id):
                     val = answer['textAnswers']['answers'][0]['value']
                     entry[question_map.get(q_id, "Unknown")] = val
                 all_results.append(entry)
-                
         return {"status": "success", "data": all_results}
     except Exception as e:
         return {"status": "error", "message": str(e)}
@@ -203,6 +221,9 @@ if __name__ == "__main__":
             print(json.dumps(get_session_results(sys.argv[2])))
         elif cmd == "batch_generate":
             print(json.dumps(batch_generate(sys.argv[2], sys.argv[3], sys.argv[4])))
+        elif cmd == "send_emails":
+            # Expects: send_emails settings_json group_data_json form_results_json
+            print(json.dumps(send_emails(sys.argv[2], sys.argv[3], sys.argv[4])))
         elif cmd == "authenticate":
             print(json.dumps(authenticate_google(sys.argv[2] if len(sys.argv) > 2 else None)))
         elif cmd == "check_status":

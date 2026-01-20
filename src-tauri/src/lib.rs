@@ -151,6 +151,50 @@ fn start_batch_generation(
     Ok(stdout)
 }
 
+#[tauri::command]
+fn save_email_settings(app: AppHandle, settings: String) -> Result<String, String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    fs::create_dir_all(&app_data_dir).map_err(|e| e.to_string())?;
+
+    let settings_path = app_data_dir.join("email_settings.json");
+    fs::write(&settings_path, settings).map_err(|e| e.to_string())?;
+
+    Ok(json!({"status": "success"}).to_string())
+}
+
+#[tauri::command]
+fn get_email_settings(app: AppHandle) -> Result<String, String> {
+    let app_data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let settings_path = app_data_dir.join("email_settings.json");
+
+    if !settings_path.exists() {
+        return Ok("{}".into());
+    }
+
+    let content = fs::read_to_string(settings_path).map_err(|e| e.to_string())?;
+    Ok(content)
+}
+
+#[tauri::command]
+fn send_emails(
+    app: tauri::AppHandle,
+    email_settings_json: String,
+    group_data_json: String,
+    form_results_json: String,
+) -> Result<String, String> {
+    let exe = resolve_sidecar(&app, "google_auth")?;
+
+    let output = std::process::Command::new(&exe)
+        .arg("send_emails")
+        .arg(email_settings_json)
+        .arg(group_data_json)
+        .arg(form_results_json)
+        .output()
+        .map_err(|e| format!("Failed to execute sidecar: {}", e))?;
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -162,7 +206,10 @@ pub fn run() {
             check_auth_status,
             start_batch_generation,
             list_sessions,
-            get_session_results
+            get_session_results,
+            save_email_settings,
+            get_email_settings,
+            send_emails,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
