@@ -1,6 +1,6 @@
+use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
-use std::fs;
 use tauri::path::BaseDirectory;
 use tauri::AppHandle;
 use tauri::Manager;
@@ -13,14 +13,14 @@ fn greet(name: &str) -> String {
 
 fn resolve_sidecar(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
     let triple = env!("TAURI_ENV_TARGET_TRIPLE");
-    
+
     // Try plain name in resource bin directory (how Tauri v2 bundles for AppImage)
     if let Ok(p) = app.path().resolve(name, BaseDirectory::Resource) {
         if p.exists() {
             return Ok(p);
         }
     }
-    
+
     // Try target-triple suffixed path in binaries subdirectory (for other bundle types)
     let rel_suffixed = format!("binaries/{}-{}", name, triple);
     if let Ok(p) = app.path().resolve(rel_suffixed, BaseDirectory::Resource) {
@@ -28,7 +28,7 @@ fn resolve_sidecar(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
             return Ok(p);
         }
     }
-    
+
     // Try non-suffixed resource path in binaries subdirectory
     let rel = format!("binaries/{}", name);
     if let Ok(p) = app.path().resolve(rel, BaseDirectory::Resource) {
@@ -36,7 +36,7 @@ fn resolve_sidecar(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
             return Ok(p);
         }
     }
-    
+
     // Fallback to workspace path in dev (check both suffixed and plain)
     let dev_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries");
     let dev_suffixed = dev_dir.join(format!("{}-{}", name, triple));
@@ -47,7 +47,7 @@ fn resolve_sidecar(app: &AppHandle, name: &str) -> Result<PathBuf, String> {
     if dev_plain.exists() {
         return Ok(dev_plain);
     }
-    
+
     Err(format!(
         "Sidecar not found: {} (checked resource and dev paths)",
         name
@@ -76,48 +76,75 @@ fn validate_credentials_file(app: AppHandle, file_path: String) -> Result<String
 fn save_credentials(app: AppHandle, file_path: String) -> Result<String, String> {
     // First validate the credentials file
     let validation_result = validate_credentials_file(app.clone(), file_path.clone())?;
-    
+
     // Parse validation result to check status
     let validation: serde_json::Value = serde_json::from_str(&validation_result)
         .map_err(|e| format!("Failed to parse validation result: {}", e))?;
-    
+
     if validation["status"] != "success" {
-        return Err(validation["message"].as_str().unwrap_or("Validation failed").to_string());
+        return Err(validation["message"]
+            .as_str()
+            .unwrap_or("Validation failed")
+            .to_string());
     }
-    
+
     // Read the credentials file
     let credentials_content = fs::read_to_string(&file_path)
         .map_err(|e| format!("Failed to read credentials file: {}", e))?;
-    
+
     // Get app data directory
-    let app_data_dir = app.path().app_data_dir()
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
         .map_err(|e| format!("Failed to get app data directory: {}", e))?;
-    
+
     // Ensure the directory exists
     fs::create_dir_all(&app_data_dir)
         .map_err(|e| format!("Failed to create app data directory: {}", e))?;
-    
-    // Save to app data directory
+
+    // Save to app data directory atomically
+    use std::fs::File;
+    use std::io::Write;
+    use std::time::{SystemTime, UNIX_EPOCH};
     let saved_path = app_data_dir.join("credentials.json");
-    fs::write(&saved_path, credentials_content)
-        .map_err(|e| format!("Failed to save credentials: {}", e))?;
-    
+    let tmp_path = app_data_dir.join(format!(
+        "credentials.json.tmp-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+    ));
+    {
+        let mut tmp_file = File::create(&tmp_path)
+            .map_err(|e| format!("Failed to create temp credentials file: {}", e))?;
+        tmp_file
+            .write_all(credentials_content.as_bytes())
+            .map_err(|e| format!("Failed to write credentials: {}", e))?;
+        tmp_file
+            .sync_all()
+            .map_err(|e| format!("Failed to sync credentials: {}", e))?;
+    }
+    std::fs::rename(&tmp_path, &saved_path)
+        .map_err(|e| format!("Failed to move credentials into place: {}", e))?;
+
     let result = serde_json::json!({
         "status": "success",
         "message": "Credentials saved successfully",
         "location": saved_path.to_string_lossy()
     });
-    
+
     Ok(result.to_string())
 }
 
 #[tauri::command]
 fn get_saved_credentials(app: AppHandle) -> Result<String, String> {
-    let app_data_dir = app.path().app_data_dir()
+    let app_data_dir = app
+        .path()
+        .app_data_dir()
         .map_err(|e| format!("Failed to get app data directory: {}", e))?;
-    
+
     let saved_path = app_data_dir.join("credentials.json");
-    
+
     if !saved_path.exists() {
         let result = serde_json::json!({
             "status": "not_found",
@@ -125,31 +152,33 @@ fn get_saved_credentials(app: AppHandle) -> Result<String, String> {
         });
         return Ok(result.to_string());
     }
-    
+
     let result = serde_json::json!({
         "status": "found",
         "path": saved_path.to_string_lossy()
     });
-    
+
     Ok(result.to_string())
 }
 
 #[tauri::command]
 fn authenticate_google(app: AppHandle, credentials_path: Option<String>) -> Result<String, String> {
     let exe = resolve_sidecar(&app, "google_auth")?;
-    
+
     // Use provided path or get saved credentials
     let creds_path = if let Some(path) = credentials_path {
         path
     } else {
-        let app_data_dir = app.path().app_data_dir()
+        let app_data_dir = app
+            .path()
+            .app_data_dir()
             .map_err(|e| format!("Failed to get app data directory: {}", e))?;
         let saved_path = app_data_dir.join("credentials.json");
-        
+
         if !saved_path.exists() {
             return Err("No credentials found. Please save credentials first.".to_string());
         }
-        
+
         saved_path.to_string_lossy().to_string()
     };
 
